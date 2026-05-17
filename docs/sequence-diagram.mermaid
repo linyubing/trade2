@@ -1,0 +1,76 @@
+sequenceDiagram
+    participant S as Scheduler
+    participant TL as TradingLoop
+    participant AG as TradingAgent
+    participant LLM as OpenAI API
+    participant RM as RiskManager
+    participant TE as TradeExecution
+    participant MD as MarketDataService
+    participant AM as AccountManager
+    participant DB as Database
+
+    Note over S,DB: System Initialization
+    S->>TL: Start trading loop (every 5 min)
+    TL->>AM: sync_account_state(account_id)
+    AM->>DB: Query/Update account
+    AM-->>TL: Return Account object
+
+    Note over S,DB: Trading Cycle for Each Symbol
+    TL->>AG: run_trading_cycle(account_id, symbol)
+    
+    AG->>MD: get_klines(symbol, "5m", 100)
+    MD->>MD: Fetch from Binance Testnet
+    MD-->>AG: Return OHLCV data
+    
+    AG->>MD: get_ticker(symbol)
+    MD-->>AG: Return current price
+    
+    AG->>AM: get_positions(account_id)
+    AM-->>AG: Return open positions
+    
+    Note over AG,LLM: LLM Decision Making
+    AG->>LLM: chat.completions.create(messages, tools)
+    LLM-->>AG: Return tool_calls or final decision
+    
+    alt LLM requests tool execution
+        AG->>MD: execute tool (e.g., get_klines)
+        MD-->>AG: Return tool result
+        AG->>LLM: chat.completions.create(messages + tool_result)
+        LLM-->>AG: Return final decision
+    end
+
+    AG-->>TL: Return decision (action, reasoning)
+
+    alt Decision: OPEN position
+        TL->>RM: validate_order(account_id, symbol, "BUY", qty, price)
+        RM->>RM: Check daily loss limit
+        RM->>RM: Check position limit
+        RM-->>TL: Return (approved, reason)
+        
+        alt Risk Approved
+            TL->>TE: place_order(account_id, symbol, "BUY", qty, price)
+            TE->>TE: Submit to Binance Testnet
+            TE->>DB: Save order to orders table
+            TE-->>TL: Return Order object
+            TL->>DB: Log AgentDecision
+        else Risk Rejected
+            TL->>DB: Log RiskEvent
+        end
+    end
+
+    alt Decision: CLOSE position
+        TL->>AM: get_positions(account_id, symbol)
+        AM-->>TL: Return Position object
+        TL->>TE: place_order(account_id, symbol, "SELL", qty, market_price)
+        TE->>DB: Update order & create trade record
+        TE-->>TL: Return Order object
+        TL->>DB: Log AgentDecision
+    end
+
+    alt Decision: HOLD
+        TL->>DB: Log AgentDecision (no action)
+    end
+
+    Note over S,DB: Cycle Complete
+    TL-->>S: Cycle complete for symbol
+    S->>S: Wait for next scheduled run

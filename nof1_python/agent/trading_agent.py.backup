@@ -1,0 +1,1171 @@
+"""
+Trading Agent module - Core AI decision-making component.
+Builds System Prompt, User Message, defines JSON output format,
+calls OpenAI API (JSON mode), handles action loop, and parses final decision.
+"""
+import json
+import openai
+from typing import Dict, List, Any, Optional
+from datetime import datetime, timezone
+import logging
+
+from config.config import settings
+from services.market_data import MarketDataService
+from services.account_manager import AccountManager
+from services.trade_execution import TradeExecutionService
+from risk.risk_manager import RiskManager
+from database.models import AIDecision
+from database.database import SessionLocal
+from utils.time_utils import get_utc_now, format_utc_time
+
+logger = logging.getLogger(__name__)
+
+
+class TradingAgent:
+    """
+    Core AI Trading Agent.
+    Handles LLM interaction, tool execution, and decision parsing.
+    """
+    
+    def __init__(self):
+        """Initialize the Trading Agent."""
+        # Initialize OpenAI client
+        self.client = openai.OpenAI(
+            api_key=settings.OPENAI_API_KEY,
+            base_url=settings.OPENAI_BASE_URL
+        )
+        self.model_name = settings.AI_MODEL_NAME
+        
+        # Initialize services
+        self.market_data = MarketDataService()
+        self.account_manager = AccountManager()
+        self.trade_execution = TradeExecutionService()
+        self.risk_manager = RiskManager()
+        
+        # Trading iteration counter
+        self.iteration = 0
+        self.start_time = get_utc_now()
+        
+        logger.info(f"TradingAgent initialized with model: {self.model_name}")
+    
+    def build_system_prompt(self, strategy: str = None) -> str:
+        """
+        Build System Prompt based on strategy (PRD Section 3.2).
+        
+        Args:
+            strategy: Trading strategy (ai-autonomous, conservative, balanced, aggressive, etc.)
+            
+        Returns:
+            str: System prompt text
+        """
+        if strategy is None:
+            strategy = settings.STRATEGY
+        
+        # Branch 1: ai-autonomous / alpha-beta strategy (fully autonomous)
+        if strategy in ["ai-autonomous", "alpha-beta"]:
+            strategy_specific_note = ""
+            if strategy == "alpha-beta":
+                strategy_specific_note = "你的所有行为都会被记录和分析，用于持续改进和学习。"
+            
+            system_prompt = f"""你是一个完全自主的AI加密货币交易员，具备自我学习和持续改进的能力。
+
+{strategy_specific_note}
+
+你的任务是基于提供的市场数据和账户信息，完全自主地分析市场并做出交易决策。
+
+你拥有的能力：
+- 分析多时间框架的市场数据（价格、技术指标、成交量等）
+- 获取消息面数据（加密货币快讯、交易所公告、社交情绪）辅助决策
+- 开仓（做多或做空）
+- 平仓（部分或全部）
+- 自主决定交易策略、风险管理、仓位大小、杠杆倍数
+- **自我复盘和持续改进**：从历史交易中学习，识别成功模式和失败原因
+
+重要：你必须严格按照以下 JSON 格式输出你的决策。每次输出必须是合法的 JSON 对象。
+
+当你需要获取数据时，在 JSON 中指定 "actions" 数组，每个 action 包含：
+- "action": 操作名称（见下方列表）
+- "args": 操作参数
+
+可用操作列表：
+1. getMarketPrice - 获取价格，参数: {{"symbol": "BTC"}}
+2. getTechnicalIndicators - 获取技术指标，参数: {{"symbol": "BTC", "timeframes": ["5m", "1h", "4h"]}}
+3. getFundingRate - 获取资金费率，参数: {{"symbol": "BTC"}}
+4. getOrderBook - 获取订单簿，参数: {{"symbol": "BTC", "limit": 20}}
+5. openPosition - 开仓，参数: {{"symbol": "BTC", "side": "long", "leverage": 10, "amountUsdt": 1000}}
+6. closePosition - 平仓，参数: {{"symbol": "BTC", "closePercent": 100}}
+7. getAccountBalance - 获取账户余额，参数: {{}}
+8. getPositions - 获取持仓，参数: {{}}
+9. calculateRisk - 计算风险，参数: {{"symbol": "BTC", "side": "long", "leverage": 10, "amountUsdt": 1000}}
+
+输出格式示例：
+```json
+{{
+  "thinking": "分析过程...",
+  "actions": [
+    {{"action": "getMarketPrice", "args": {{"symbol": "BTC"}}}}
+  ]
+}}
+```
+
+如果不需要更多数据，直接做出交易决策：
+```json
+{{
+  "thinking": "分析过程...",
+  "decision": {{
+    "action": "hold",
+    "reason": "原因..."
+  }}
+}}
+```
+
+或开仓决策：
+```json
+{{
+  "thinking": "分析过程...",
+  "decision": {{
+    "action": "open",
+    "symbol": "BTCUSDT",
+    "side": "long",
+    "leverage": 10,
+    "amountUsdt": 1000,
+    "reason": "原因..."
+  }}
+}}
+```
+
+或平仓决策：
+```json
+{{
+  "thinking": "分析过程...",
+  "decision": {{
+    "action": "close",
+    "symbol": "BTCUSDT",
+    "closePercent": 100,
+    "reason": "原因..."
+  }}
+}}
+```
+
+现在，请基于提供的市场数据做出你的交易决策。
+            
+            return system_prompt
+        
+        # Branch 2: Other strategies (conservative/balanced/aggressive, etc.)
+        else:
+            risk_rules = ""
+            if strategy == "conservative":
+                risk_rules = """
+风险规则：
+- 最大杠杆：5倍
+- 单笔最大风险：总资金的2%
+- 必须设置止损
+- 优先保护本金
+"""
+            elif strategy == "balanced":
+                risk_rules = """
+风险规则：
+- 最大杠杆：10倍
+- 单笔最大风险：总资金的3%
+- 建议设置止损
+- 平衡收益和风险
+"""
+            elif strategy == "aggressive":
+                risk_rules = """
+风险规则：
+- 最大杠杆：20倍
+- 单笔最大风险：总资金的5%
+- 严格区分趋势市和震荡市
+- 趋势市：持有时间长，止损宽松
+- 震荡市：快速进出，止损严格
+"""
+            
+            # Add code-level protection note if enabled
+            protection_note = ""
+            if settings.ENABLE_CODE_LEVEL_PROTECTION:
+                protection_note = """
+**代码级保护已启用**：
+系统会自动监控并执行以下操作：
+- 自动止损：根据杠杆不同，止损线为5%-8%
+- 自动移动止盈：保护你的利润
+- 自动分批止盈：锁定收益
+
+你仍然可以主动决策，代码保护是额外的安全网。
+"""
+            
+            system_prompt = f"""你是一个AI辅助的加密货币交易员，遵循既定的交易策略和风险管理规则。
+
+{protection_note}
+
+{rules}
+
+你的任务是基于提供的市场数据和账户信息，在策略框架内做出交易决策。
+
+你拥有的能力：
+- 分析多时间框架的市场数据（价格、技术指标、成交量等）
+- 获取消息面数据（加密货币快讯、交易所公告）辅助决策
+- 开仓（做多或做空）
+- 平仓（部分或全部）
+- 查询账户状态、持仓、订单
+
+交易风格指导：
+- 遵循策略的风险规则
+- 保持纪律，不要偏离策略
+- 重视风险管理胜过盈利
+- 记录决策理由，便于复盘
+
+系统硬性风控底线：
+- 最大杠杆：{settings.MAX_LEVERAGE} 倍
+- 最大持仓数：{settings.MAX_POSITIONS} 个
+
+现在，请基于提供的市场数据，在策略框架内做出你的交易决策。"""
+
+            return system_prompt
+    
+    def build_user_message(self, account_info: Dict, positions: List[Dict], 
+                           market_data: Dict, news_data: Dict = None, 
+                           trade_history: List[Dict] = None) -> str:
+        """
+        Build User Message (PRD Section 3.3) - Plain text, NOT JSON.
+        
+        Args:
+            account_info: Account balance information
+            positions: Current positions
+            market_data: Market data for BTC
+            news_data: News data (optional)
+            trade_history: Recent trade history (optional)
+            
+        Returns:
+            str: User message text
+        """
+        self.iteration += 1
+        minutes_elapsed = int(get_utc_now().timestamp() - self.start_time.timestamp()) // 60
+        current_time = format_utc_time(get_utc_now(), "%Y-%m-%d %H:%M:%S UTC")
+        
+        # Build message text
+        message_lines = [
+            f"=== 交易周期 #{self.iteration} | 已运行 {minutes_elapsed} 分钟 | 当前时间：{current_time} ===",
+            "",
+            "【账户状态】",
+            f"- 总余额：{account_info.get('totalBalance', 0):.2f} USDT",
+            f"- 可用余额：{account_info.get('availableBalance', 0):.2f} USDT",
+            f"- 未实现盈亏：{account_info.get('unrealisedPnl', 0):.2f} USDT",
+            f"- 收益率：{account_info.get('returnPercent', 0):.2f}%",
+            "",
+            "【当前持仓】"
+        ]
+        
+        # Add positions
+        if positions:
+            for pos in positions:
+                holding_time = self._calculate_holding_time(pos.get('open_time', get_utc_now()))
+                stop_loss_price = self._calculate_stop_loss(pos)
+                trailing_stop = "未触发"
+                
+                message_lines.append(
+                    f"- {pos['symbol']} | {pos['side']} | "
+                    f"数量：{pos['quantity']:.4f} | "
+                    f"杠杆：{pos.get('leverage', 1)}x | "
+                    f"入场价：{pos['entry_price']:.2f} | "
+                    f"当前价：{pos.get('mark_price', pos.get('current_price', 0)):.2f} | "
+                    f"盈亏：{pos.get('unrealized_pnl', 0):.2f} USDT | "
+                    f"持仓时间：{holding_time:.1f} 小时"
+                )
+                message_lines.append(
+                    f"  - 止损线：{stop_loss_price:.2f} | "
+                    f"移动止盈触发：{trailing_stop}"
+                )
+        else:
+            message_lines.append("（无持仓）")
+        
+        message_lines.extend([
+            "",
+            "【市场数据 - BTC】",
+            f"- 当前价格：{market_data.get('price', 0):.2f}"
+        ])
+        
+        # Add technical indicators if available
+        if 'indicators' in market_data:
+            ind = market_data['indicators']
+            if 'ema20' in ind:
+                message_lines.append(f"- EMA20：{ind['ema20']:.2f}")
+            if 'macd' in ind:
+                message_lines.append(f"- MACD：{ind['macd']:.4f}")
+            if 'rsi7' in ind:
+                message_lines.append(f"- RSI(7)：{ind['rsi7']:.2f}")
+            if 'rsi14' in ind:
+                message_lines.append(f"- RSI(14)：{ind['rsi14']:.2f}")
+        
+        # Add funding rate
+        if 'funding_rate' in market_data:
+            message_lines.append(f"- 资金费率：{market_data['funding_rate']:.6f}")
+        
+        # Add multi-timeframe data
+        message_lines.extend([
+            "",
+            "多时间框架分析："
+        ])
+        
+        if 'multi_timeframe' in market_data:
+            for tf, data in market_data['multi_timeframe'].items():
+                message_lines.append(
+                    f"- {tf}：开盘 {data.get('open', 0):.2f} | "
+                    f"最高 {data.get('high', 0):.2f} | "
+                    f"最低 {data.get('low', 0):.2f} | "
+                    f"收盘 {data.get('close', 0):.2f} | "
+                    f"成交量 {data.get('volume', 0):.2f}"
+                )
+        else:
+            message_lines.append("- 暂无多时间框架数据")
+        
+        # Add news data
+        message_lines.extend([
+            "",
+            "【新闻和消息】"
+        ])
+        
+        if news_data and 'news' in news_data and news_data['news']:
+            for news in news_data['news'][:5]:  # Limit to 5 news items
+                message_lines.append(f"- {news.get('title', 'No title')} ({news.get('timestamp', 'N/A')})")
+                if 'content' in news and news['content']:
+                    content = news['content'][:200] + "..." if len(news['content']) > 200 else news['content']
+                    message_lines.append(f"  {content}")
+        else:
+            message_lines.append("（暂无新闻）")
+        
+        # Add trade history
+        message_lines.extend([
+            "",
+            "【最近交易记录】"
+        ])
+        
+        if trade_history:
+            for trade in trade_history[-5:]:  # Last 5 trades
+                message_lines.append(
+                    f"- {trade.get('timestamp', 'N/A')} | "
+                    f"{trade.get('symbol', 'N/A')} | "
+                    f"{trade.get('side', 'N/A')} | "
+                    f"数量：{trade.get('quantity', 0):.4f} | "
+                    f"价格：{trade.get('price', 0):.2f} | "
+                    f"盈亏：{trade.get('pnl', 0):.2f}"
+                )
+        else:
+            message_lines.append("（无交易记录）")
+        
+        # Add available tools list
+        message_lines.extend([
+            "",
+            "【可用工具】",
+            "1. getMarketPrice(symbol) - 获取指定币种当前价格",
+            "2. getTechnicalIndicators(symbol, timeframes) - 获取多时间框架技术指标",
+            "3. getFundingRate(symbol) - 获取资金费率",
+            "4. getOrderBook(symbol, limit) - 获取订单簿",
+            "5. openPosition(symbol, side, leverage, amountUsdt) - 开仓",
+            "6. closePosition(symbol, closePercent) - 平仓（部分或全部）",
+            "7. cancelOrder(symbol, orderId) - 取消订单",
+            "8. getAccountBalance() - 获取账户余额",
+            "9. getPositions() - 获取当前持仓",
+            "10. getOpenOrders() - 获取未成交订单",
+            "11. checkOrderStatus(orderId) - 检查订单状态",
+            "12. calculateRisk(symbol, side, leverage, amountUsdt) - 计算交易风险",
+            "13. syncPositions() - 同步持仓数据",
+            "14. getCryptoNews(coin, limit) - 获取加密货币新闻",
+            "15. getExchangeAnnouncements(coin, limit) - 获取交易所公告",
+            "16. getLatestEvents(coin, limit) - 获取最新市场事件",
+            ""
+        ])
+        
+        # Add self-reflection prompt for autonomous strategy
+        if settings.STRATEGY == "ai-autonomous":
+            message_lines.extend([
+                "【复盘思考】",
+                "在分析市场和做出决策之前，请先回顾：",
+                "1. 最近3笔交易的表现（盈利/亏损）",
+                "2. 成功交易的共同特点",
+                "3. 失败交易的问题所在",
+                "4. 本次交易的改进计划",
+                "",
+                "然后输出你的复盘思考，再执行交易决策。",
+                ""
+            ])
+        
+        message_lines.append("现在，请基于以上信息做出你的交易决策（调用合适的工具，或直接输出分析结果）。")
+        
+        return "\n".join(message_lines)
+    
+    def get_tools_definition(self) -> List[Dict]:
+        """
+        Get 16 Function Calling tools definition (PRD Section 3.6).
+        
+        Returns:
+            List[Dict]: List of tool definitions in OpenAI format
+        """
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "getMarketPrice",
+                    "description": "Get current market price for a specified crypto symbol",
+                    "parameters": {
+                        "type": "object",
+                        "required": ["symbol"],
+                        "properties": {
+                            "symbol": {
+                                "type": "string",
+                                "enum": ["BTC", "ETH", "SOL", "BNB"],
+                                "description": "Crypto symbol"
+                            }
+                        }
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "getTechnicalIndicators",
+                    "description": "Get multi-timeframe technical indicators for a specified symbol",
+                    "parameters": {
+                        "type": "object",
+                        "required": ["symbol"],
+                        "properties": {
+                            "symbol": {
+                                "type": "string",
+                                "enum": ["BTC", "ETH", "SOL", "BNB"]
+                            },
+                            "timeframes": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string",
+                                    "enum": ["1m", "3m", "5m", "15m", "30m", "1h", "4h"]
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "getFundingRate",
+                    "description": "Get perpetual contract funding rate for a symbol",
+                    "parameters": {
+                        "type": "object",
+                        "required": ["symbol"],
+                        "properties": {
+                            "symbol": {
+                                "type": "string",
+                                "enum": ["BTC", "ETH", "SOL", "BNB"]
+                            }
+                        }
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "getOrderBook",
+                    "description": "Get order book for a specified symbol",
+                    "parameters": {
+                        "type": "object",
+                        "required": ["symbol"],
+                        "properties": {
+                            "symbol": {
+                                "type": "string",
+                                "enum": ["BTC", "ETH", "SOL", "BNB"]
+                            },
+                            "limit": {
+                                "type": "number",
+                                "description": "Number of bid/ask levels (default 20)"
+                            }
+                        }
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "openPosition",
+                    "description": "Open a new futures position (market order)",
+                    "parameters": {
+                        "type": "object",
+                        "required": ["symbol", "side", "leverage", "amountUsdt"],
+                        "properties": {
+                            "symbol": {
+                                "type": "string",
+                                "enum": ["BTC", "ETH", "SOL", "BNB"]
+                            },
+                            "side": {
+                                "type": "string",
+                                "enum": ["long", "short"]
+                            },
+                            "leverage": {
+                                "type": "number",
+                                "minimum": 1,
+                                "maximum": settings.MAX_LEVERAGE
+                            },
+                            "amountUsdt": {
+                                "type": "number",
+                                "description": "Margin amount in USDT"
+                            }
+                        }
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "closePosition",
+                    "description": "Close part or all of an existing position (market order)",
+                    "parameters": {
+                        "type": "object",
+                        "required": ["symbol"],
+                        "properties": {
+                            "symbol": {
+                                "type": "string",
+                                "enum": ["BTC", "ETH", "SOL", "BNB"]
+                            },
+                            "closePercent": {
+                                "type": "number",
+                                "minimum": 1,
+                                "maximum": 100,
+                                "description": "Percentage to close (default 100)"
+                            }
+                        }
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "cancelOrder",
+                    "description": "Cancel a pending order",
+                    "parameters": {
+                        "type": "object",
+                        "required": ["symbol", "orderId"],
+                        "properties": {
+                            "symbol": {
+                                "type": "string",
+                                "enum": ["BTC", "ETH", "SOL", "BNB"]
+                            },
+                            "orderId": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "getAccountBalance",
+                    "description": "Get current account balance and PnL",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {}
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "getPositions",
+                    "description": "Get all current active positions",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {}
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "getOpenOrders",
+                    "description": "Get all pending orders",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {}
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "checkOrderStatus",
+                    "description": "Check status of a specific order",
+                    "parameters": {
+                        "type": "object",
+                        "required": ["orderId"],
+                        "properties": {
+                            "orderId": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "calculateRisk",
+                    "description": "Calculate risk metrics for a proposed trade",
+                    "parameters": {
+                        "type": "object",
+                        "required": ["symbol", "side", "leverage", "amountUsdt"],
+                        "properties": {
+                            "symbol": {
+                                "type": "string",
+                                "enum": ["BTC", "ETH", "SOL", "BNB"]
+                            },
+                            "side": {
+                                "type": "string",
+                                "enum": ["long", "short"]
+                            },
+                            "leverage": {
+                                "type": "number"
+                            },
+                            "amountUsdt": {
+                                "type": "number"
+                            },
+                            "stopLossPercent": {
+                                "type": "number"
+                            }
+                        }
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "syncPositions",
+                    "description": "Sync local position records with exchange data",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {}
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "getCryptoNews",
+                    "description": "Get latest crypto news for a specified coin",
+                    "parameters": {
+                        "type": "object",
+                        "required": ["coin"],
+                        "properties": {
+                            "coin": {
+                                "type": "string",
+                                "enum": ["bitcoin", "ethereum", "solana", "binancecoin"],
+                                "description": "Coin name for news API"
+                            },
+                            "limit": {
+                                "type": "number",
+                                "description": "Number of news items (default 10)"
+                            }
+                        }
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "getExchangeAnnouncements",
+                    "description": "Get latest exchange announcements for a specified coin",
+                    "parameters": {
+                        "type": "object",
+                        "required": ["coin"],
+                        "properties": {
+                            "coin": {
+                                "type": "string",
+                                "enum": ["bitcoin", "ethereum", "solana", "binancecoin"]
+                            },
+                            "limit": {
+                                "type": "number"
+                            }
+                        }
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "getLatestEvents",
+                    "description": "Get latest market event alerts for a specified coin",
+                    "parameters": {
+                        "type": "object",
+                        "required": ["coin"],
+                        "properties": {
+                            "coin": {
+                                "type": "string",
+                                "enum": ["bitcoin", "ethereum", "solana", "binancecoin"]
+                            },
+                            "limit": {
+                                "type": "number"
+                            }
+                        }
+                    }
+                }
+            }
+        ]
+        
+        return tools
+    
+    def call_llm(self, messages: List[Dict], tools: List[Dict] = None, 
+                  max_iterations: int = 5) -> Dict:
+        """
+        Call LLM API with JSON mode (Function Calling 已禁用).
+        解析 JSON 输出中的 actions 数组，执行工具调用循环。
+        
+        Args:
+            messages: List of conversation messages
+            tools: 已废弃（保留参数兼容）
+            max_iterations: Maximum tool call iterations
+            
+        Returns:
+            Dict: Final LLM response or decision
+        """
+        iteration = 0
+        
+        while iteration < max_iterations:
+            try:
+                logger.debug(f"Calling LLM (iteration {iteration + 1})")
+                
+                # 统一使用 JSON 模式，不再尝试 Function Calling
+                response = self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=messages,
+                    response_format={"type": "json_object"},
+                    temperature=0.7,
+                    max_tokens=2000
+                )
+                
+                message = response.choices[0].message
+                content = message.content or ""
+                
+                # 解析 JSON
+                try:
+                    json_data = json.loads(content)
+                except json.JSONDecodeError as e:
+                    logger.error(f"LLM 返回了非 JSON 内容: {content[:200]}")
+                    return {
+                        "type": "error",
+                        "content": f"JSON 解析失败: {e}"
+                    }
+                
+                logger.info(f"LLM JSON 响应: {json.dumps(json_data, ensure_ascii=False)[:300]}")
+                
+                # 检查是否有 actions 需要执行
+                if "actions" in json_data and isinstance(json_data["actions"], list):
+                    actions = json_data["actions"]
+                    logger.info(f"LLM 请求执行 {len(actions)} 个操作")
+                    
+                    # 执行所有 actions
+                    action_results = []
+                    for action_item in actions:
+                        action_name = action_item.get("action")
+                        action_args = action_item.get("args", {})
+                        
+                        logger.info(f"执行操作: {action_name}, 参数: {action_args}")
+                        result = self.execute_tool(action_name, action_args)
+                        action_results.append({
+                            "action": action_name,
+                            "args": action_args,
+                            "result": result
+                        })
+                        logger.info(f"操作结果: {result}")
+                    
+                    # 将操作结果添加回 messages，让 LLM 继续决策
+                    messages.append({
+                        "role": "assistant",
+                        "content": content
+                    })
+                    
+                    # 添加 tool results 作为 user message
+                    results_text = "操作执行结果：
+" + "
+".join([
+                        f"- {r['action']}: {json.dumps(r['result'], ensure_ascii=False)}"
+                        for r in action_results
+                    ])
+                    messages.append({
+                        "role": "user",
+                        "content": results_text
+                    })
+                    
+                    iteration += 1
+                    continue  # 继续循环，让 LLM 基于操作结果做决策
+                
+                # 没有 actions，说明是最终决策
+                if "decision" in json_data:
+                    logger.info(f"LLM 做出最终决策: {json_data['decision']}")
+                    return {
+                        "type": "json_decision",
+                        "content": content,
+                        "data": json_data
+                    }
+                
+                # 只有 thinking 没有 decision/actions（分析或复盘）
+                if "thinking" in json_data and "decision" not in json_data and "actions" not in json_data:
+                    logger.info("LLM 输出分析/复盘（无决策）")
+                    return {
+                        "type": "text",
+                        "content": content,
+                        "data": json_data
+                    }
+                
+                # 未知格式
+                logger.warning(f"LLM 返回了未知 JSON 格式: {json_data}")
+                return {
+                    "type": "unknown",
+                    "content": content,
+                    "data": json_data
+                }
+                    
+            except Exception as e:
+                logger.error(f"调用 LLM 时出错: {e}")
+                return {
+                    "type": "error",
+                    "content": str(e),
+                    "raw_response": None
+                }
+        
+        # 达到最大迭代次数
+        logger.warning(f"达到最大工具调用迭代次数 ({max_iterations})")
+        return {
+            "type": "max_iterations_reached",
+            "content": "达到最大工具调用迭代次数",
+            "raw_response": None
+        }
+    def execute_tool(self, function_name: str, function_args: Dict) -> Dict:
+        """
+        Execute a tool function.
+        
+        Args:
+            function_name: Name of the tool to execute
+            function_args: Arguments for the tool
+            
+        Returns:
+            Dict: Tool execution result
+        """
+        try:
+            # Map tool names to actual functions
+            if function_name == "getMarketPrice":
+                symbol = function_args.get("symbol")
+                price = self.market_data.get_current_price(symbol)
+                return {"symbol": symbol, "price": price}
+            
+            elif function_name == "getTechnicalIndicators":
+                symbol = function_args.get("symbol")
+                timeframes = function_args.get("timeframes", ["5m", "15m", "1h", "4h"])
+                indicators = self.market_data.get_technical_indicators(symbol, timeframes)
+                return {"symbol": symbol, "timeframes": indicators}
+            
+            elif function_name == "getFundingRate":
+                symbol = function_args.get("symbol")
+                rate_data = self.market_data.get_funding_rate(symbol)
+                return rate_data
+            
+            elif function_name == "getOrderBook":
+                symbol = function_args.get("symbol")
+                limit = function_args.get("limit", 20)
+                order_book = self.market_data.get_order_book(symbol, limit)
+                return order_book
+            
+            elif function_name == "openPosition":
+                symbol = function_args.get("symbol")
+                side = function_args.get("side")
+                leverage = function_args.get("leverage")
+                amount_usdt = function_args.get("amountUsdt")
+                
+                # Check risk before opening position
+                risk_check = self.risk_manager.check_before_trade(
+                    symbol, side, leverage, amount_usdt
+                )
+                if not risk_check["allowed"]:
+                    return {"success": False, "error": risk_check["reason"]}
+                
+                result = self.trade_execution.open_position(
+                    symbol, side, leverage, amount_usdt
+                )
+                return result
+            
+            elif function_name == "closePosition":
+                symbol = function_args.get("symbol")
+                close_percent = function_args.get("closePercent", 100)
+                result = self.trade_execution.close_position(symbol, close_percent)
+                return result
+            
+            elif function_name == "cancelOrder":
+                symbol = function_args.get("symbol")
+                order_id = function_args.get("orderId")
+                result = self.trade_execution.cancel_order(symbol, order_id)
+                return result
+            
+            elif function_name == "getAccountBalance":
+                balance = self.account_manager.get_account_balance()
+                return balance
+            
+            elif function_name == "getPositions":
+                positions = self.account_manager.get_positions()
+                return {"positions": positions}
+            
+            elif function_name == "getOpenOrders":
+                orders = self.account_manager.get_open_orders()
+                return {"orders": orders}
+            
+            elif function_name == "checkOrderStatus":
+                order_id = function_args.get("orderId")
+                status = self.account_manager.check_order_status(order_id)
+                return status
+            
+            elif function_name == "calculateRisk":
+                symbol = function_args.get("symbol")
+                side = function_args.get("side")
+                leverage = function_args.get("leverage")
+                amount_usdt = function_args.get("amountUsdt")
+                stop_loss_percent = function_args.get("stopLossPercent")
+                
+                risk_metrics = self.risk_manager.calculate_risk(
+                    symbol, side, leverage, amount_usdt, stop_loss_percent
+                )
+                return risk_metrics
+            
+            elif function_name == "syncPositions":
+                positions = self.account_manager.sync_positions()
+                return {"positions": positions, "count": len(positions)}
+            
+            elif function_name == "getCryptoNews":
+                coin = function_args.get("coin")
+                limit = function_args.get("limit", 10)
+                # Placeholder - would need news API integration
+                return {"coin": coin, "news": [], "message": "News API not implemented yet"}
+            
+            elif function_name == "getExchangeAnnouncements":
+                coin = function_args.get("coin")
+                limit = function_args.get("limit", 10)
+                # Placeholder - would need announcements API
+                return {"coin": coin, "announcements": [], "message": "Announcements API not implemented yet"}
+            
+            elif function_name == "getLatestEvents":
+                coin = function_args.get("coin")
+                limit = function_args.get("limit", 10)
+                # Placeholder - would need events API
+                return {"coin": coin, "events": [], "message": "Events API not implemented yet"}
+            
+            else:
+                logger.error(f"Unknown tool: {function_name}")
+                return {"error": f"Unknown tool: {function_name}"}
+        
+        except Exception as e:
+            logger.error(f"Error executing tool {function_name}: {e}")
+            return {"error": str(e)}
+    
+    def run_trading_cycle(self) -> Dict:
+        """
+        Run a complete trading cycle.
+        
+        Returns:
+            Dict: Trading cycle result
+        """
+        logger.info(f"Starting trading cycle #{self.iteration + 1}")
+        
+        try:
+            # 1. Get account info
+            account_info = self.account_manager.get_account_balance()
+            
+            # 2. Get current positions
+            positions = self.account_manager.get_positions()
+            
+            # 3. Get market data
+            symbol = settings.TRADING_SYMBOL.replace("USDT", "")
+            current_price = self.market_data.get_current_price(symbol)
+            funding_rate = self.market_data.get_funding_rate(symbol)
+            indicators = self.market_data.get_technical_indicators(
+                symbol, ["5m", "15m", "1h", "4h"]
+            )
+            
+            # Get multi-timeframe klines
+            multi_tf = self.market_data.get_multi_timeframe_klines(
+                settings.TRADING_SYMBOL, ["5m", "15m", "1h", "4h"], limit=1
+            )
+            
+            market_data = {
+                "price": current_price,
+                "funding_rate": funding_rate.get("funding_rate", 0),
+                "indicators": indicators.get("1h", {}),  # Use 1h as primary
+                "multi_timeframe": {}
+            }
+            
+            # Format multi-timeframe data
+            for tf, klines in multi_tf.items():
+                if klines:
+                    latest = klines[-1]
+                    market_data["multi_timeframe"][tf] = {
+                        "open": latest["open"],
+                        "high": latest["high"],
+                        "low": latest["low"],
+                        "close": latest["close"],
+                        "volume": latest["volume"]
+                    }
+            
+            # 4. Get news data (placeholder)
+            news_data = {"news": []}
+            
+            # 5. Get trade history (from database)
+            trade_history = self._get_trade_history()
+            
+            # 6. Build messages
+            system_prompt = self.build_system_prompt()
+            user_message = self.build_user_message(
+                account_info, positions, market_data, news_data, trade_history
+            )
+            
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message}
+            ]
+            
+            # 7. Save prompt to database for audit
+            db = SessionLocal()
+            try:
+                ai_decision = AIDecision(
+                    prompt=user_message,
+                    response="",  # Will update after LLM response
+                    decision="",
+                    execution_result="",
+                    model_name=self.model_name,
+                    iteration=self.iteration
+                )
+                db.add(ai_decision)
+                db.commit()
+                decision_id = ai_decision.id
+            finally:
+                db.close()
+            
+            # 8. Call LLM
+            logger.info("Calling LLM for trading decision...")
+            llm_response = self.call_llm(messages)
+            
+            # 9. Update AI decision record
+            db = SessionLocal()
+            try:
+                ai_decision = db.query(AIDecision).filter(AIDecision.id == decision_id).first()
+                if ai_decision:
+                    ai_decision.response = json.dumps(
+                        llm_response, 
+                        ensure_ascii=False, 
+                        default=str
+                    )
+                    ai_decision.decision = llm_response.get("content", "")
+                    db.commit()
+            finally:
+                db.close()
+            
+            # 10. Parse and execute decision
+            result = self._parse_and_execute_decision(llm_response)
+            
+            # 11. Update execution result
+            db = SessionLocal()
+            try:
+                ai_decision = db.query(AIDecision).filter(AIDecision.id == decision_id).first()
+                if ai_decision:
+                    ai_decision.execution_result = json.dumps(
+                        result,
+                        ensure_ascii=False,
+                        default=str
+                    )
+                    db.commit()
+            finally:
+                db.close()
+            
+            logger.info(f"Trading cycle #{self.iteration} completed")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error in trading cycle: {e}")
+            return {"success": False, "error": str(e)}
+    
+    def _parse_and_execute_decision(self, llm_response: Dict) -> Dict:
+        """
+        Parse LLM response and execute decision if needed.
+        
+        Args:
+            llm_response: LLM response dictionary
+            
+        Returns:
+            Dict: Execution result
+        """
+        if llm_response["type"] == "text":
+            # LLM provided analysis or reflection
+            content = llm_response["content"]
+            logger.info(f"LLM analysis: {content[:200]}...")
+            
+            # Check if this is a self-reflection (for ai-autonomous strategy)
+            if settings.STRATEGY == "ai-autonomous" and "复盘" in content:
+                logger.info("AI provided self-reflection")
+            
+            return {
+                "success": True,
+                "action": "analyze",
+                "content": content
+            }
+        
+        elif llm_response["type"] == "error":
+            return {
+                "success": False,
+                "action": "error",
+                "error": llm_response["content"]
+            }
+        
+        else:
+            return {
+                "success": True,
+                "action": "unknown",
+                "response": llm_response
+            }
+    
+    def _calculate_holding_time(self, open_time: datetime) -> float:
+        """Calculate holding time in hours."""
+        if isinstance(open_time, datetime):
+            if open_time.tzinfo is None:
+                open_time = open_time.replace(tzinfo=timezone.utc)
+            elapsed = get_utc_now() - open_time
+            return elapsed.total_seconds() / 3600
+        return 0.0
+    
+    def _calculate_stop_loss(self, position: Dict) -> float:
+        """Calculate stop loss price for a position."""
+        entry_price = position.get('entry_price', 0)
+        side = position.get('side', 'long')
+        leverage = position.get('leverage', 1)
+        
+        # Simple stop loss calculation
+        stop_loss_percent = 0.08 if leverage <= 5 else (0.06 if leverage <= 15 else 0.05)
+        
+        if side == 'long':
+            return entry_price * (1 - stop_loss_percent)
+        else:
+            return entry_price * (1 + stop_loss_percent)
+    
+    def _get_trade_history(self, limit: int = 10) -> List[Dict]:
+        """Get recent trade history from database."""
+        db = SessionLocal()
+        try:
+            from database.models import Trade
+            trades = db.query(Trade).order_by(Trade.timestamp.desc()).limit(limit).all()
+            return [{
+                "timestamp": trade.timestamp.isoformat() if trade.timestamp else "",
+                "symbol": trade.symbol,
+                "side": trade.side,
+                "quantity": float(trade.quantity) if trade.quantity else 0,
+                "price": float(trade.price) if trade.price else 0,
+                "pnl": float(trade.pnl) if trade.pnl else 0
+            } for trade in trades]
+        except Exception as e:
+            logger.error(f"Error fetching trade history: {e}")
+            return []
+        finally:
+            db.close()
+
+
+logger.info("TradingAgent module loaded successfully")

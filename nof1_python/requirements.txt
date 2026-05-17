@@ -1,0 +1,26 @@
+# Exchange API
+python-binance==1.0.19
+
+# LLM API
+openai==1.35.0
+
+# Database
+sqlalchemy==2.0.30
+pymysql==1.1.0
+
+# Data validation
+pydantic==2.7.0
+pydantic-settings==2.1.0
+
+# Configuration management
+python-dotenv==1.0.0
+
+# Scheduling
+apscheduler==3.10.4
+
+# Logging
+loguru==0.7.2
+
+# Data processing
+pandas==2.2.2
+numpy==1.26.4
