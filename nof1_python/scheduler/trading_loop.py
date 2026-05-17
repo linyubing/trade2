@@ -47,20 +47,35 @@ class TradingScheduler:
             logger.warning("Scheduler is already running")
             return
         
+        symbols = settings.TRADING_SYMBOLS
         logger.info(
             f"Starting trading scheduler "
-            f"(interval={settings.TRADING_INTERVAL_MINUTES} minutes)"
+            f"(interval={settings.TRADING_INTERVAL_MINUTES} minutes, "
+            f"symbols={symbols})"
         )
         
-        # Add trading job
+        # Add trading job for each symbol
         trigger = IntervalTrigger(
             minutes=settings.TRADING_INTERVAL_MINUTES
         )
+        for symbol in symbols:
+            job_id = f"trading_cycle_{symbol}"
+            self.scheduler.add_job(
+                func=self._trading_cycle_wrapper,
+                trigger=trigger,
+                args=[symbol],
+                id=job_id,
+                name=f"Trading Cycle - {symbol}",
+                replace_existing=True
+            )
+            logger.info(f"Added trading job for {symbol} (id={job_id})")
+        
+        # Add risk management job (runs for all symbols)
         self.scheduler.add_job(
-            func=self._trading_cycle_wrapper,
+            func=self._check_risk_management,
             trigger=trigger,
-            id='trading_cycle',
-            name='Trading Cycle',
+            id="risk_management_check",
+            name="Risk Management Check",
             replace_existing=True
         )
         
@@ -70,9 +85,12 @@ class TradingScheduler:
         
         logger.info("Trading scheduler started successfully")
         
-        # Run first cycle immediately
-        logger.info("Running initial trading cycle...")
-        self._trading_cycle_wrapper()
+        # Run first cycle immediately for each symbol
+        logger.info("Running initial trading cycles...")
+        self._check_risk_management()
+        for symbol in symbols:
+            logger.info(f"Running initial cycle for {symbol}...")
+            self._trading_cycle_wrapper(symbol)
     
     def stop(self):
         """Stop the trading scheduler gracefully."""
@@ -85,28 +103,33 @@ class TradingScheduler:
         self.is_running = False
         logger.info("Trading scheduler stopped successfully")
     
-    def _trading_cycle_wrapper(self):
-        """Wrapper for trading cycle with error handling."""
+    def _trading_cycle_wrapper(self, symbol: str = None):
+        """Wrapper for trading cycle with error handling.
+
+        Args:
+            symbol: Trading symbol for this cycle. Defaults to first symbol
+                   in TRADING_SYMBOLS for backward compatibility.
+        """
+        if symbol is None:
+            symbol = settings.TRADING_SYMBOLS[0] if settings.TRADING_SYMBOLS else "BTCUSDT"
+
         try:
             logger.info("=" * 60)
-            logger.info("Starting new trading cycle")
+            logger.info(f"Starting new trading cycle for {symbol}")
             logger.info("=" * 60)
             
-            # Check risk management (stop-loss, etc.)
-            self._check_risk_management()
+            # Run trading cycle for the specific symbol
+            result = self.trading_agent.run_trading_cycle(symbol)
             
-            # Run trading cycle
-            result = self.trading_agent.run_trading_cycle()
-            
-            logger.info(f"Trading cycle completed: {result}")
+            logger.info(f"Trading cycle completed for {symbol}: {result}")
             
         except Exception as e:
-            logger.error(f"Error in trading cycle: {e}", exc_info=True)
+            logger.error(f"Error in trading cycle for {symbol}: {e}", exc_info=True)
     
     def _check_risk_management(self):
-        """Check risk management rules (stop-loss, max holding time, etc.)."""
+        """Check risk management rules for all positions across all symbols."""
         try:
-            # Get current positions
+            # Get current positions for all symbols
             positions = self.account_manager.get_positions()
             
             if not positions:
@@ -164,13 +187,14 @@ class TradingScheduler:
             if action["action"] in ["close_position", "force_close"]:
                 # Close position
                 logger.info(f"Executing risk action: Close {symbol}")
-                result = trade_exec.close_position(symbol, 100)
-                if result["success"]:
-                    logger.info(f"Successfully closed position: {symbol}")
-                else:
-                    logger.error(
-                        f"Failed to close position: {result.get('error')}"
-                    )
+                results = trade_exec.close_position(symbol, percentage=100)
+                for result in results:
+                    if result.get("status") == "FILLED":
+                        logger.info(f"Successfully closed position: {symbol}")
+                    else:
+                        logger.error(
+                            f"Failed to close position: {result.get('error')}"
+                        )
             
             elif action["action"] == "partial_close":
                 close_percent = action.get("close_percent", 30)
@@ -178,15 +202,16 @@ class TradingScheduler:
                     f"Executing risk action: Partial close {symbol} "
                     f"({close_percent}%)"
                 )
-                result = trade_exec.close_position(symbol, close_percent)
-                if result["success"]:
-                    logger.info(
-                        f"Successfully closed {close_percent}% of {symbol}"
-                    )
-                else:
-                    logger.error(
-                        f"Failed to partial close: {result.get('error')}"
-                    )
+                results = trade_exec.close_position(symbol, percentage=close_percent)
+                for result in results:
+                    if result.get("status") == "FILLED":
+                        logger.info(
+                            f"Successfully closed {close_percent}% of {symbol}"
+                        )
+                    else:
+                        logger.error(
+                            f"Failed to partial close: {result.get('error')}"
+                        )
         
         except Exception as e:
             logger.error(f"Error executing risk action: {e}", exc_info=True)

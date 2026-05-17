@@ -26,7 +26,7 @@ class RiskManager:
         Check all positions for stop-loss triggers.
         
         Args:
-            positions: List of current positions
+            positions: List of current positions (can be for all symbols)
             
         Returns:
             List[Dict]: List of positions that triggered stop-loss
@@ -107,7 +107,7 @@ class RiskManager:
         Check positions for take-profit triggers (batch closing).
         
         Args:
-            positions: List of current positions
+            positions: List of current positions (can be for all symbols)
             
         Returns:
             List[Dict]: List of partial close actions
@@ -230,7 +230,7 @@ class RiskManager:
         Check if any position has exceeded max holding time.
         
         Args:
-            positions: List of current positions
+            positions: List of current positions (can be for all symbols)
             
         Returns:
             List[Dict]: List of positions to force close
@@ -392,7 +392,7 @@ class RiskManager:
         Check and update trailing stop for profitable positions.
         
         Args:
-            positions: List of current positions
+            positions: List of current positions (can be for all symbols)
             
         Returns:
             List[Dict]: List of trailing stop update actions
@@ -418,9 +418,9 @@ class RiskManager:
             profit_pct *= leverage
             
             # Check trailing stop triggers
-            # Profit 5% → move stop to +2%
-            # Profit 10% → move stop to +5%
-            # Profit 15% → move stop to +8%
+            # Profit 5% -> move stop to +2%
+            # Profit 10% -> move stop to +5%
+            # Profit 15% -> move stop to +8%
             new_stop_pct = None
             if profit_pct >= 15:
                 new_stop_pct = 8

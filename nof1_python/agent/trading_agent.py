@@ -109,13 +109,24 @@ class TradingAgent:
             return sp
     def build_user_message(self, account_info: Dict, positions: List[Dict], 
                            market_data: Dict, news_data: Dict = None, 
-                           trade_history: List[Dict] = None) -> str:
+                           trade_history: List[Dict] = None,
+                           symbol: str = None) -> str:
         """
         Build User Message (PRD Section 3.3) - Plain text, NOT JSON.
+
+        Args:
+            account_info: Account balance information.
+            positions: List of current positions.
+            market_data: Market data dictionary.
+            news_data: Optional news data.
+            trade_history: Optional trade history.
+            symbol: Current trading symbol being analyzed.
         """
         self.iteration += 1
         minutes_elapsed = int(get_utc_now().timestamp() - self.start_time.timestamp()) // 60
         current_time = format_utc_time(get_utc_now(), "%Y-%m-%d %H:%M:%S UTC")
+        
+        symbol_label = symbol if symbol else settings.TRADING_SYMBOLS[0] if settings.TRADING_SYMBOLS else "BTCUSDT"
         
         message_lines = [
             f"=== 交易周期 #{self.iteration} | 已运行 {minutes_elapsed} 分钟 | 当前时间：{current_time} ===",
@@ -153,7 +164,7 @@ class TradingAgent:
         
         message_lines.extend([
             "",
-            "【市场数据 - BTC】",
+            f"【市场数据 - {symbol_label}】",
             f"- 当前价格：{market_data.get('price', 0):.2f}"
         ])
 
@@ -900,11 +911,21 @@ class TradingAgent:
             logger.error(f"Error executing tool {function_name}: {e}")
             return {"error": str(e)}
     
-    def run_trading_cycle(self) -> Dict:
+    def run_trading_cycle(self, symbol: str = None) -> Dict:
         """
-        Run a complete trading cycle.
+        Run a complete trading cycle for a specific symbol.
+
+        Args:
+            symbol: Trading symbol (e.g., "BTCUSDT"). If None, defaults to
+                   the first symbol in TRADING_SYMBOLS for backward compatibility.
+
+        Returns:
+            Dict: Trading cycle result.
         """
-        logger.info(f"Starting trading cycle #{self.iteration + 1}")
+        if symbol is None:
+            symbol = settings.TRADING_SYMBOLS[0] if settings.TRADING_SYMBOLS else "BTCUSDT"
+
+        logger.info(f"Starting trading cycle #{self.iteration + 1} for {symbol}")
         
         try:
             account_info = self.account_manager.get_account_balance()
@@ -912,18 +933,18 @@ class TradingAgent:
             positions = self.account_manager.get_positions()
             logger.info(f"[DATA] positions: {positions}")
             
-            symbol = settings.TRADING_SYMBOL.replace("USDT", "")
-            current_price = self.market_data.get_current_price(symbol)
-            logger.info(f"[DATA] current_price({symbol}): {current_price}")
-            funding_rate = self.market_data.get_funding_rate(symbol)
+            llm_symbol = symbol.replace("USDT", "")
+            current_price = self.market_data.get_current_price(llm_symbol)
+            logger.info(f"[DATA] current_price({llm_symbol}): {current_price}")
+            funding_rate = self.market_data.get_funding_rate(llm_symbol)
             logger.info(f"[DATA] funding_rate: {funding_rate}")
             indicators = self.market_data.get_technical_indicators(
-                symbol, ["5m", "15m", "1h", "4h"]
+                llm_symbol, ["5m", "15m", "1h", "4h"]
             )
             logger.info(f"[DATA] indicators: {indicators}")
             
             multi_tf = self.market_data.get_multi_timeframe_klines(
-                settings.TRADING_SYMBOL, ["5m", "15m", "1h", "4h"], limit=1
+                symbol, ["5m", "15m", "1h", "4h"], limit=1
             )
             logger.info(f"[DATA] multi_tf raw: {multi_tf}")
             
@@ -953,7 +974,8 @@ class TradingAgent:
             
             system_prompt = self.build_system_prompt()
             user_message = self.build_user_message(
-                account_info, positions, market_data, news_data, trade_history
+                account_info, positions, market_data, news_data, trade_history,
+                symbol=symbol
             )
             logger.info(f"[DATA] user_message sent to LLM:\n{user_message}")
             
@@ -1010,11 +1032,11 @@ class TradingAgent:
             finally:
                 db.close()
             
-            logger.info(f"Trading cycle #{self.iteration} completed")
+            logger.info(f"Trading cycle #{self.iteration} for {symbol} completed")
             return result
             
         except Exception as e:
-            logger.error(f"Error in trading cycle: {e}")
+            logger.error(f"Error in trading cycle for {symbol}: {e}")
             return {"success": False, "error": str(e)}
     
     def _parse_and_execute_decision(self, llm_response: Dict) -> Dict:

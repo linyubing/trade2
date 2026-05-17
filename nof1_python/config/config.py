@@ -3,7 +3,8 @@ Configuration management module.
 Loads environment variables from .env file using pydantic-settings.
 """
 from pydantic_settings import BaseSettings
-from typing import Optional
+from pydantic import field_validator
+from typing import Optional, List, Any
 
 
 class Settings(BaseSettings):
@@ -20,7 +21,7 @@ class Settings(BaseSettings):
     AI_MODEL_NAME: str = "gpt-4"
 
     # Trading configuration
-    TRADING_SYMBOL: str = "BTCUSDT"
+    TRADING_SYMBOLS: List[str] = ["BTCUSDT"]
     TRADING_INTERVAL_MINUTES: int = 5
 
     # Risk management configuration
@@ -53,6 +54,32 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
+
+    @field_validator("TRADING_SYMBOLS", mode="before")
+    @classmethod
+    def parse_trading_symbols(cls, v: Any) -> List[str]:
+        """Parse TRADING_SYMBOLS from comma-separated string or list."""
+        if isinstance(v, list):
+            return v
+        if isinstance(v, str):
+            return [s.strip() for s in v.split(",") if s.strip()]
+        return ["BTCUSDT"]
+
+    @property
+    def TRADING_SYMBOL(self) -> str:
+        """Backward-compatible property: returns the first symbol.
+
+        New code should use TRADING_SYMBOLS directly.
+        """
+        return self.TRADING_SYMBOLS[0] if self.TRADING_SYMBOLS else "BTCUSDT"
+
+    @TRADING_SYMBOL.setter
+    def TRADING_SYMBOL(self, value: str):
+        """Backward-compatible setter: updates the first symbol."""
+        if self.TRADING_SYMBOLS:
+            self.TRADING_SYMBOLS[0] = value
+        else:
+            self.TRADING_SYMBOLS = [value]
 
 
 # Global settings instance

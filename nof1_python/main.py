@@ -53,7 +53,7 @@ def main():
     
     # Print configuration
     logger.info("Configuration:")
-    logger.info(f"  - Trading Symbol: {settings.TRADING_SYMBOL}")
+    logger.info(f"  - Trading Symbols: {settings.TRADING_SYMBOLS}")
     logger.info(f"  - Trading Interval: {settings.TRADING_INTERVAL_MINUTES} minutes")
     logger.info(f"  - Strategy: {settings.STRATEGY}")
     logger.info(f"  - AI Model: {settings.AI_MODEL_NAME}")
