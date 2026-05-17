@@ -53,74 +53,54 @@ class TradingAgent:
 
         # ai-autonomous / alpha-beta
         if strategy in ["ai-autonomous", "alpha-beta"]:
-            p = ""
-            p += "你是一个AI加密货币交易员。
-"
-            p += "
-"
-            p += "我已经提供了完整数据：市场行情、技术指标、账户余额。
-"
-            p += "
-"
-            p += "基于以上数据做出交易决策，只输出JSON，不要其他文字：
-"
-            p += "
-"
-            p += "- 观望: {\"action\": \"hold\", \"reason\": \"原因\"}
-"
-            p += "- 开仓: {\"action\": \"open\", \"side\": \"long\", \"leverage\": 5, \"amount_usdt\": 100, \"reason\": \"原因\"}
-"
-            p += "- 平仓: {\"action\": \"close\", \"close_percent\": 100, \"reason\": \"原因\"}
-"
-            p += "
-"
-            p += "杠杆1-10倍，单笔50-200 USDT，没信号就hold。
-"
+            p = (
+                "你是一个AI加密货币交易员。\n\n"
+                "我已经提供了完整数据：市场行情、技术指标、账户余额。\n\n"
+                "基于以上数据做出交易决策，只输出JSON，不要其他文字：\n\n"
+                '- 观望: {"action": "hold", "reason": "原因"}\n'
+                '- 开仓: {"action": "open", "side": "long", "leverage": 5, "amount_usdt": 100, "reason": "原因"}\n'
+                '- 平仓: {"action": "close", "close_percent": 100, "reason": "原因"}\n\n'
+                "杠杆1-10倍，单笔50-200 USDT，没信号就hold。"
+            )
             return p
 
         # 其他策略
         else:
-            r = "
-"
+            r = ""
             if strategy == "conservative":
-                r += "风险规则：
-- 最大杠杆：5倍
-- 单笔最大风险：总资金的2%
-- 必须设置止损
-- 优先保护本金
-"
+                r = (
+                    "风险规则：\n"
+                    "- 最大杠杆：5倍\n"
+                    "- 单笔最大风险：总资金的2%\n"
+                    "- 必须设置止损\n"
+                    "- 优先保护本金\n"
+                )
             elif strategy == "balanced":
-                r += "风险规则：
-- 最大杠杆：10倍
-- 单笔最大风险：总资金的3%
-- 建议设置止损
-- 平衡收益和风险
-"
+                r = (
+                    "风险规则：\n"
+                    "- 最大杠杆：10倍\n"
+                    "- 单笔最大风险：总资金的3%\n"
+                    "- 建议设置止损\n"
+                    "- 平衡收益和风险\n"
+                )
             elif strategy == "aggressive":
-                r += "风险规则：
-- 最大杠杆：20倍
-- 单笔最大风险：总资金的5%
-- 严格区分趋势市和震荡市
-- 趋势市：持有时间长
-- 震荡市：快速进出
-"
+                r = (
+                    "风险规则：\n"
+                    "- 最大杠杆：20倍\n"
+                    "- 单笔最大风险：总资金的5%\n"
+                    "- 严格区分趋势市和震荡市\n"
+                    "- 趋势市：持有时间长\n"
+                    "- 震荡市：快速进出\n"
+                )
             pn = ""
             if settings.ENABLE_CODE_LEVEL_PROTECTION:
-                pn = "
-**代码级保护已启用**：系统自动止损止盈。
-"
-            sp = ("你是一个AI加密货币交易员。
-"
-                "
-"
+                pn = "**代码级保护已启用**：系统自动止损止盈。\n"
+            sp = (
+                "你是一个AI加密货币交易员。\n\n"
                 f"{pn}"
-                f"{r}"
-                "
-"
-                "基于数据在策略框架内做出交易决策。
-"
-                f"系统限制：最大杠杆{settings.MAX_LEVERAGE}倍，最多{settings.MAX_POSITIONS}个持仓。
-"
+                f"{r}\n"
+                "基于数据在策略框架内做出交易决策。\n"
+                f"系统限制：最大杠杆{settings.MAX_LEVERAGE}倍，最多{settings.MAX_POSITIONS}个持仓。"
             )
             return sp
     def build_user_message(self, account_info: Dict, positions: List[Dict], 
