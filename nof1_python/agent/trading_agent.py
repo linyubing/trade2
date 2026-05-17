@@ -153,32 +153,29 @@ class TradingAgent:
             "【市场数据 - BTC】",
             f"- 当前价格：{market_data.get('price', 0):.2f}"
         ])
-        
-        if 'indicators' in market_data:
-            ind = market_data['indicators']
-            if 'ema20' in ind:
-                message_lines.append(f"- EMA20：{ind['ema20']:.2f}")
-            if 'macd' in ind:
-                message_lines.append(f"- MACD：{ind['macd']:.4f}")
-            if 'rsi7' in ind:
-                message_lines.append(f"- RSI(7)：{ind['rsi7']:.2f}")
-            if 'rsi14' in ind:
-                message_lines.append(f"- RSI(14)：{ind['rsi14']:.2f}")
-        
+
         if 'funding_rate' in market_data:
             message_lines.append(f"- 资金费率：{market_data['funding_rate']:.6f}")
-        
-        message_lines.extend(["", "多时间框架分析："])
-        
+
+        message_lines.extend(["", "【多时间框架技术指标分析】"])
+
         if 'multi_timeframe' in market_data:
-            for tf, data in market_data['multi_timeframe'].items():
-                message_lines.append(
-                    f"- {tf}：开盘 {data.get('open', 0):.2f} | "
-                    f"最高 {data.get('high', 0):.2f} | "
-                    f"最低 {data.get('low', 0):.2f} | "
-                    f"收盘 {data.get('close', 0):.2f} | "
-                    f"成交量 {data.get('volume', 0):.2f}"
-                )
+            for tf in ["5m", "15m", "1h", "4h"]:
+                if tf not in market_data['multi_timeframe']:
+                    continue
+                data = market_data['multi_timeframe'][tf]
+                msg = f"【{tf}】收盘 {data.get('close', 0):.2f} | 高 {data.get('high', 0):.2f} | 低 {data.get('low', 0):.2f} | 量 {data.get('volume', 0):.2f}"
+                if 'ema20' in data:
+                    msg += f" | EMA20={data['ema20']:.2f}"
+                if 'ema50' in data:
+                    msg += f" EMA50={data['ema50']:.2f}"
+                if 'rsi14' in data:
+                    msg += f" | RSI14={data['rsi14']:.2f}"
+                if 'macd' in data:
+                    msg += f" | MACD={data['macd']:.4f}"
+                if 'trend' in data:
+                    msg += f" | 趋势={data['trend']}"
+                message_lines.append(msg)
         else:
             message_lines.append("- 暂无多时间框架数据")
         
@@ -922,10 +919,10 @@ class TradingAgent:
             market_data = {
                 "price": current_price,
                 "funding_rate": funding_rate.get("funding_rate", 0),
-                "indicators": indicators.get("1h", {}),
+                "indicators": indicators,
                 "multi_timeframe": {}
             }
-            
+
             for tf, klines in multi_tf.items():
                 if klines:
                     latest = klines[-1]
@@ -936,6 +933,9 @@ class TradingAgent:
                         "close": latest["close"],
                         "volume": latest["volume"]
                     }
+                    # 添加该时间框架的技术指标
+                    if tf in indicators:
+                        market_data["multi_timeframe"][tf].update(indicators[tf])
             
             news_data = {"news": []}
             trade_history = self._get_trade_history()
