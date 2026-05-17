@@ -60,6 +60,7 @@ class TradingAgent:
                 '- 观望: {"action": "hold", "reason": "原因"}\n'
                 '- 开仓: {"action": "open", "side": "long", "leverage": 5, "amount_usdt": 100, "reason": "原因"}\n'
                 '- 平仓: {"action": "close", "close_percent": 100, "reason": "原因"}\n\n'
+                "规则：reason字段控制在15个字以内，只写结论不写分析过程。\n"
                 "杠杆1-10倍，单笔50-200 USDT，没信号就hold。"
             )
             return p
@@ -595,7 +596,7 @@ class TradingAgent:
                     messages=messages,
                     # LM Studio: response_format removed - model follows prompt for JSON output
                     temperature=0.7,
-                    max_tokens=1024,
+                    max_tokens=2048,
                     timeout=120
                 )
                 
