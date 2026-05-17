@@ -731,7 +731,16 @@ class TradingAgent:
                         "content": content,
                         "data": json_data
                     }
-                
+
+                # 直接决策格式：{"action": "hold", "reason": "..."}
+                if "action" in json_data:
+                    logger.info(f"LLM 做出直接决策: action={json_data['action']}")
+                    return {
+                        "type": "json_decision",
+                        "content": content,
+                        "data": json_data
+                    }
+
                 logger.info(f"LLM 返回了未知 JSON 格式，降级为文本响应: {json_data}")
                 return {
                     "type": "text",
