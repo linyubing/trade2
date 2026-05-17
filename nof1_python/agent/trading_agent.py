@@ -736,7 +736,8 @@ class TradingAgent:
                     continue
                 
                 if "decision" in json_data:
-                    logger.info(f"LLM 做出最终决策: {json_data['decision']}")
+                    _action_cn = {"hold": "观望", "open": "开仓", "close": "平仓"}.get(json_data['decision'], json_data['decision'])
+                    logger.info(f"LLM 做出最终决策: {_action_cn} ({json_data['decision']})")
                     return {
                         "type": "json_decision",
                         "content": content,
@@ -753,7 +754,8 @@ class TradingAgent:
 
                 # 直接决策格式：{"action": "hold", "reason": "..."}
                 if "action" in json_data:
-                    logger.info(f"LLM 做出直接决策: action={json_data['action']}")
+                    _action_cn = {"hold": "观望", "open": "开仓", "close": "平仓"}.get(json_data['action'], json_data['action'])
+                    logger.info(f"LLM 做出直接决策: {_action_cn} ({json_data['action']})")
                     return {
                         "type": "json_decision",
                         "content": content,
@@ -1045,7 +1047,7 @@ class TradingAgent:
         """
         if llm_response["type"] == "text":
             content = llm_response["content"]
-            logger.info(f"LLM analysis: {content[:200]}...")
+            logger.info(f"LLM 分析: {content[:200]}...")
             
             if settings.STRATEGY == "ai-autonomous" and "复盘" in content:
                 logger.info("AI provided self-reflection")
@@ -1060,7 +1062,8 @@ class TradingAgent:
             data = llm_response.get("data", {})
             action = data.get("action", "unknown")
             reason = data.get("reason", "")
-            logger.info(f"LLM 决策执行: action={action}, reason={reason}")
+            _action_cn = {"hold": "观望", "open": "开仓", "close": "平仓"}.get(action, action)
+            logger.info(f"LLM 决策执行: {_action_cn} ({action}), 原因: {reason}")
             return {
                 "success": True,
                 "action": action,
