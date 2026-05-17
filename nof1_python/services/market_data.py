@@ -346,7 +346,7 @@ class MarketDataService:
                 "rsi7": float(rsi7),
                 "rsi14": float(rsi14),
                 "volume": float(df["volume"].iloc[-1]),
-                "trend": "bullish" if df["close"].iloc[-1] > ema20 else "bearish"
+                "trend": "bullish(多头)" if df["close"].iloc[-1] > ema20 else "bearish(空头)"
             }
 
         return result
