@@ -1023,13 +1023,29 @@ class TradingAgent:
                 "content": content
             }
         
+        elif llm_response["type"] == "json_decision":
+            data = llm_response.get("data", {})
+            action = data.get("action", "unknown")
+            reason = data.get("reason", "")
+            logger.info(f"LLM 决策执行: action={action}, reason={reason}")
+            return {
+                "success": True,
+                "action": action,
+                "reason": reason,
+                "side": data.get("side"),
+                "leverage": data.get("leverage"),
+                "amount_usdt": data.get("amount_usdt"),
+                "close_percent": data.get("close_percent"),
+                "response": llm_response
+            }
+
         elif llm_response["type"] == "error":
             return {
                 "success": False,
                 "action": "error",
                 "error": llm_response["content"]
             }
-        
+
         else:
             return {
                 "success": True,
