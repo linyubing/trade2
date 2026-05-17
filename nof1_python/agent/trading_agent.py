@@ -659,18 +659,24 @@ class TradingAgent:
                         except json.JSONDecodeError:
                             json_data = None
 
-                # 策略4：用 raw_decode 找到内容中第一个合法 JSON 对象
+                # 策略4：从后往前找最后一个合法 JSON 对象（推理文本在前，JSON 在后）
                 if json_data is None:
-                    _start = content.find("{")
-                    if _start != -1:
-                        try:
-                            decoder = json.JSONDecoder()
-                            obj, idx = decoder.raw_decode(content, _start)
-                            json_data = obj
-                            content = json.dumps(json_data, ensure_ascii=False)
-                            logger.debug("JSON 解析成功（策略4：raw_decode）")
-                        except json.JSONDecodeError:
-                            json_data = None
+                    _last_brace = content.rfind("}")
+                    if _last_brace != -1:
+                        # 从最后一个 } 往前找匹配的 {
+                        _search = content[:_last_brace + 1]
+                        for _start in range(_search.rfind("{"), -1, -1):
+                            if _search[_start] != "{":
+                                continue
+                            try:
+                                decoder = json.JSONDecoder()
+                                obj, idx = decoder.raw_decode(_search, _start)
+                                json_data = obj
+                                content = json.dumps(json_data, ensure_ascii=False)
+                                logger.debug("JSON 解析成功（策略4：从后往前 raw_decode）")
+                                break
+                            except json.JSONDecodeError:
+                                continue
 
                 if json_data is None:
                     logger.error(f"LLM 返回了非 JSON 内容: {content[:300]}")
