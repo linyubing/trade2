@@ -244,6 +244,8 @@ class TradingAgent:
             ])
         
         message_lines.append("现在，请基于以上信息做出你的交易决策（调用合适的工具，或直接输出分析结果）。")
+        message_lines.append("")
+        message_lines.append("⚠️ 极其重要：你的输出必须且只能是一个合法JSON对象，不要任何其他文字。示例: {\"action\": \"hold\", \"reason\": \"RSI超买\"}")
         return "\n".join(message_lines)
     
     def get_tools_definition(self) -> List[Dict]:
