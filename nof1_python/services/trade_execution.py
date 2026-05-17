@@ -10,6 +10,7 @@ import time
 
 from config.config import settings
 from utils.time_utils import get_utc_now
+from utils.retry import retry_with_backoff
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,8 @@ class TradeExecutionService:
 
         logger.info(f"TradeExecutionService initialized (testnet={settings.BINANCE_TESTNET})")
 
+    @retry_with_backoff(max_retries=3, base_delay=1.0, max_delay=8.0,
+                        exceptions=(Exception,))
     def open_position(
         self,
         symbol: str,
@@ -107,6 +110,8 @@ class TradeExecutionService:
             logger.error(f"Error opening position: {e}", exc_info=True)
             raise
 
+    @retry_with_backoff(max_retries=3, base_delay=1.0, max_delay=8.0,
+                        exceptions=(Exception,))
     def close_position(
         self,
         symbol: str,
@@ -166,6 +171,8 @@ class TradeExecutionService:
             logger.error(f"Error closing position: {e}", exc_info=True)
             raise
 
+    @retry_with_backoff(max_retries=3, base_delay=1.0, max_delay=8.0,
+                        exceptions=(Exception,))
     def cancel_order(self, symbol: str, order_id: str) -> Dict:
         """
         Cancel an open order.
@@ -189,6 +196,8 @@ class TradeExecutionService:
             logger.error(f"Error cancelling order {order_id}: {e}", exc_info=True)
             raise
 
+    @retry_with_backoff(max_retries=3, base_delay=1.0, max_delay=8.0,
+                        exceptions=(Exception,))
     def get_order_status(self, symbol: str, order_id: str) -> Dict:
         """
         Check order status.
@@ -218,6 +227,8 @@ class TradeExecutionService:
             logger.error(f"Error checking order status {order_id}: {e}", exc_info=True)
             raise
 
+    @retry_with_backoff(max_retries=3, base_delay=1.0, max_delay=8.0,
+                        exceptions=(Exception,))
     def get_open_orders(self, symbol: str = None) -> List[Dict]:
         """
         Get all open orders.

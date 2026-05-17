@@ -85,12 +85,15 @@ class TradingScheduler:
         
         logger.info("Trading scheduler started successfully")
         
-        # Run first cycle immediately for each symbol
+        # Run first cycle immediately for each symbol (staggered to avoid proxy overload)
         logger.info("Running initial trading cycles...")
+        import time
         self._check_risk_management()
-        for symbol in symbols:
+        for i, symbol in enumerate(symbols):
             logger.info(f"Running initial cycle for {symbol}...")
             self._trading_cycle_wrapper(symbol)
+            if i < len(symbols) - 1:
+                time.sleep(2)  # Stagger initial cycles by 2s to avoid proxy overload
     
     def stop(self):
         """Stop the trading scheduler gracefully."""
@@ -125,6 +128,8 @@ class TradingScheduler:
             
         except Exception as e:
             logger.error(f"Error in trading cycle for {symbol}: {e}", exc_info=True)
+            # Return a graceful failure so scheduler continues
+            return {"success": False, "error": str(e), "symbol": symbol}
     
     def _check_risk_management(self):
         """Check risk management rules for all positions across all symbols."""

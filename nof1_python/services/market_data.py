@@ -10,6 +10,7 @@ import time
 
 from config.config import settings
 from utils.time_utils import get_utc_now
+from utils.retry import retry_with_backoff
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +70,8 @@ class MarketDataService:
 
         logger.info(f"MarketDataService initialized (testnet={settings.BINANCE_TESTNET})")
 
+    @retry_with_backoff(max_retries=3, base_delay=1.0, max_delay=8.0,
+                        exceptions=(Exception,))
     def get_klines(
         self,
         symbol: str = None,
@@ -155,6 +158,8 @@ class MarketDataService:
 
         return result
 
+    @retry_with_backoff(max_retries=3, base_delay=1.0, max_delay=8.0,
+                        exceptions=(Exception,))
     def get_ticker(self, symbol: str = None) -> Dict:
         """
         Get 24hr ticker price change statistics.
@@ -197,6 +202,8 @@ class MarketDataService:
             logger.error(f"Error fetching ticker: {e}")
             raise
 
+    @retry_with_backoff(max_retries=3, base_delay=1.0, max_delay=8.0,
+                        exceptions=(Exception,))
     def get_current_price(self, symbol: str = None) -> float:
         """
         Get current market price for a symbol.
@@ -221,6 +228,8 @@ class MarketDataService:
             logger.error(f"Error fetching price: {e}")
             raise
 
+    @retry_with_backoff(max_retries=3, base_delay=1.0, max_delay=8.0,
+                        exceptions=(Exception,))
     def get_funding_rate(self, symbol: str = None) -> Dict:
         """
         Get funding rate for perpetual contracts.
@@ -254,6 +263,8 @@ class MarketDataService:
             logger.error(f"Error fetching funding rate: {e}")
             return {"symbol": symbol, "funding_rate": 0.0, "funding_time": get_utc_now()}
 
+    @retry_with_backoff(max_retries=3, base_delay=1.0, max_delay=8.0,
+                        exceptions=(Exception,))
     def get_order_book(self, symbol: str = None, limit: int = 20) -> Dict:
         """
         Get order book (market depth).
@@ -287,6 +298,8 @@ class MarketDataService:
             logger.error(f"Error fetching order book: {e}")
             raise
 
+    @retry_with_backoff(max_retries=3, base_delay=1.0, max_delay=8.0,
+                        exceptions=(Exception,))
     def get_technical_indicators(self, symbol: str, timeframes: List[str]) -> Dict:
         """
         Calculate technical indicators for given symbol and timeframes.

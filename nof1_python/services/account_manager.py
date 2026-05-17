@@ -10,6 +10,7 @@ import time
 
 from config.config import settings
 from utils.time_utils import get_utc_now
+from utils.retry import retry_with_backoff
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,8 @@ class AccountManager:
 
         logger.info(f"AccountManager initialized (testnet={settings.BINANCE_TESTNET})")
 
+    @retry_with_backoff(max_retries=3, base_delay=1.0, max_delay=8.0,
+                        exceptions=(Exception,))
     def get_account_balance(self) -> Dict:
         """
         Get futures account balance and PnL.
@@ -83,6 +86,8 @@ class AccountManager:
             logger.error(f"Error fetching account balance: {e}", exc_info=True)
             raise
 
+    @retry_with_backoff(max_retries=3, base_delay=1.0, max_delay=8.0,
+                        exceptions=(Exception,))
     def get_positions(self, symbol: str = None) -> List[Dict]:
         """
         Get current futures positions.
@@ -121,6 +126,8 @@ class AccountManager:
             logger.error(f"Error fetching positions: {e}", exc_info=True)
             raise
 
+    @retry_with_backoff(max_retries=3, base_delay=1.0, max_delay=8.0,
+                        exceptions=(Exception,))
     def get_all_orders(self, symbol: str = None, limit: int = 20) -> List[Dict]:
         """
         Get recent orders (all statuses).
