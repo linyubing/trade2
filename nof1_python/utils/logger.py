@@ -1,11 +1,34 @@
 """
 Logger configuration module.
 Configures loguru for application logging.
+Also intercepts standard library logging to loguru.
 """
 import sys
+import logging
 from loguru import logger
 from pathlib import Path
 from config.config import settings
+
+
+class InterceptHandler(logging.Handler):
+    """Intercept standard library logging and forward to loguru."""
+
+    def emit(self, record):
+        # Get corresponding loguru level
+        try:
+            level = logger.level(record.levelname).name
+        except ValueError:
+            level = record.levelno
+
+        # Find caller depth
+        frame, depth = logging.currentframe(), 2
+        while frame.f_code.co_filename == logging.__file__:
+            frame = frame.f_back
+            depth += 1
+
+        logger.opt(depth=depth, exception=record.exc_info).log(
+            level, record.getMessage()
+        )
 
 
 def setup_logger():
@@ -37,6 +60,18 @@ def setup_logger():
         encoding="utf-8"
     )
     
+    # Intercept standard library logging (scheduler, agent, etc.)
+    logging.basicConfig(
+        handlers=[InterceptHandler()],
+        level=getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO),
+        force=True
+    )
+    # Also intercept existing loggers
+    for name in logging.root.manager.loggerDict:
+        _logger = logging.getLogger(name)
+        _logger.handlers = [InterceptHandler()]
+        _logger.propagate = False
+
     return logger
 
 
