@@ -21,7 +21,7 @@ class Settings(BaseSettings):
 
     # Trading configuration
     TRADING_SYMBOL: str = "BTCUSDT"
-    TRADING_INTERVAL_MINUTES: int = 60
+    TRADING_INTERVAL_MINUTES: int = 5
 
     # Risk management configuration
     MAX_POSITION_SIZE: float = 0.1
