@@ -54,13 +54,16 @@ class TradingAgent:
         # ai-autonomous / alpha-beta
         if strategy in ["ai-autonomous", "alpha-beta"]:
             p = (
-                "你是一个AI加密货币交易员。\n\n"
-                "我已经提供了完整数据：市场行情、技术指标、账户余额。\n\n"
-                "基于以上数据做出交易决策，只输出JSON，不要其他文字，不要解释你的思考过程：\n\n"
-                '- 观望: {"action": "hold", "reason": "RSI超买,无趋势突破"}\n'
-                '- 开仓: {"action": "open", "side": "long", "leverage": 5, "amount_usdt": 100, "reason": "EMA金叉,趋势多头"}\n'
-                '- 平仓: {"action": "close", "close_percent": 100, "reason": "触及止损线"}\n\n'
-                "规则：reason字段必填，写具体的技术指标或市场信号（如RSI超买/EMA金叉/跌破支撑等），控制在20字以内。\n"
+                "你是一个AI加密货币交易员。用户消息中包含所有市场数据，你只需阅读数据后直接输出JSON交易决策。\n\n"
+                "严格规则（违反任意一条即视为错误输出）：\n"
+                "1. 只输出一个合法的JSON对象，不要任何其他文字、解释、分析或思考过程\n"
+                "2. 不要写\"首先\"、\"基于数据\"、\"分析如下\"等任何前缀\n"
+                "3. 输出必须是可以被json.loads直接解析的纯JSON\n\n"
+                "输出格式示例（三选一）：\n"
+                '- {"action": "hold", "reason": "RSI超买,无趋势突破"}\n'
+                '- {"action": "open", "side": "long", "leverage": 5, "amount_usdt": 100, "reason": "EMA金叉,趋势多头"}\n'
+                '- {"action": "close", "close_percent": 100, "reason": "触及止损线"}\n\n'
+                "reason字段必填，写具体的技术指标或市场信号（如RSI超买/EMA金叉/跌破支撑等），控制在20字以内。\n"
                 "杠杆1-10倍，单笔50-200 USDT，没信号就hold。"
             )
             return p
