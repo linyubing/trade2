@@ -56,7 +56,7 @@ class TradingAgent:
             p = (
                 "你是一个AI加密货币交易员。\n\n"
                 "我已经提供了完整数据：市场行情、技术指标、账户余额。\n\n"
-                "基于以上数据做出交易决策，只输出JSON，不要其他文字：\n\n"
+                "基于以上数据做出交易决策，只输出JSON，不要其他文字，不要解释你的思考过程：\n\n"
                 '- 观望: {"action": "hold", "reason": "原因"}\n'
                 '- 开仓: {"action": "open", "side": "long", "leverage": 5, "amount_usdt": 100, "reason": "原因"}\n'
                 '- 平仓: {"action": "close", "close_percent": 100, "reason": "原因"}\n\n'
@@ -595,7 +595,7 @@ class TradingAgent:
                     messages=messages,
                     # LM Studio: response_format removed - model follows prompt for JSON output
                     temperature=0.7,
-                    max_tokens=4096,
+                    max_tokens=1024,
                     timeout=120
                 )
                 
