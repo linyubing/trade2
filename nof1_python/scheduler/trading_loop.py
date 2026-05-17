@@ -23,7 +23,9 @@ class TradingScheduler:
     
     def __init__(self):
         """Initialize the trading scheduler."""
-        self.scheduler = BackgroundScheduler()
+        # max_workers=1 ensures jobs run sequentially, avoiding proxy overload
+        # with multiple symbols making concurrent API calls
+        self.scheduler = BackgroundScheduler(max_workers=1)
         self.trading_agent = TradingAgent()
         self.risk_manager = RiskManager()
         self.account_manager = AccountManager()
